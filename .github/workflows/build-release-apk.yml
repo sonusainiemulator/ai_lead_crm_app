@@ -26,6 +26,9 @@ jobs:
         with:
           channel: stable
 
+      - name: Create Flutter scaffold
+        run: flutter create --platforms=android --project-name ai_lead_crm_app .
+
       - name: Validate signing secrets
         run: |
           if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ] || [ -z "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" ] || [ -z "${{ secrets.ANDROID_KEY_ALIAS }}" ] || [ -z "${{ secrets.ANDROID_KEY_PASSWORD }}" ]; then
