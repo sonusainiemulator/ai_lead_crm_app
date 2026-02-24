@@ -1,5 +1,8 @@
 name: Build Release APK
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -55,6 +58,16 @@ jobs:
 
       - name: Build release APK
         run: flutter build apk --release
+
+      - name: Create release with APK
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ github.run_number }}
+          name: Release APK v${{ github.run_number }}
+          body: Automated signed release APK from GitHub Actions.
+          prerelease: false
+          artifactErrorsFailBuild: true
+          artifacts: build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4

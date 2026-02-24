@@ -41,6 +41,7 @@ If Flutter is not installed locally, use the workflow at .github/workflows/build
 2. Open Actions tab and run Build Debug APK.
 3. Download artifact named app-debug-apk.
 4. Install app-debug.apk on your Android device for testing.
+5. APK is also published on the GitHub Releases page as a pre-release.
 
 ## Build Signed Release APK (GitHub Actions)
 Use workflow .github/workflows/build-release-apk.yml.
@@ -64,6 +65,7 @@ Add these in your GitHub repository settings:
 2. Open Actions tab.
 3. Run Build Release APK.
 4. Download artifact app-release-apk.
+5. Signed APK is also published on the GitHub Releases page.
 
 ## Next Integration Steps
 1. Replace mock services with real Perfex CRM REST endpoints.
