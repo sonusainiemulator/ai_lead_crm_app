@@ -1,4 +1,4 @@
-# AI Lead CRM App
+# AI Powered Lead CRM App For Perfex CRM 
 
 Flutter demo app for AI-powered lead management integrated with Perfex CRM (mock REST flow).
 
