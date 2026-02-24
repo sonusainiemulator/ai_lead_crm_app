@@ -67,6 +67,38 @@ Add these in your GitHub repository settings:
 4. Download artifact app-release-apk.
 5. Signed APK is also published on the GitHub Releases page.
 
+## Beta Testing Pipeline (Google Play Open Testing)
+Workflow: .github/workflows/beta-open-testing.yml
+
+### Trigger
+- Push to `develop` or `beta` branches
+- Manual run via `workflow_dispatch`
+
+### What it does
+- Runs static checks and unit tests
+- Runs integration/smoke tests in matrix targets (Phone, Tablet, ChromeOS-labeled, AndroidXR-labeled)
+- Auto-generates beta version (`1.0.0-beta.<run_number>+<version_code>`)
+- Builds signed release AAB + APK
+- Uploads AAB to Google Play Open Testing track (`beta`)
+- Publishes APK to GitHub Releases (pre-release)
+- Publishes build artifacts and deployment summary
+- Optional Slack notification
+
+### Required Secrets for Beta Pipeline
+- PLAY_PACKAGE_NAME
+- PLAY_SERVICE_ACCOUNT_JSON
+- ANDROID_KEYSTORE_BASE64
+- ANDROID_KEYSTORE_PASSWORD
+- ANDROID_KEY_ALIAS
+- ANDROID_KEY_PASSWORD
+
+### Optional Secrets
+- SLACK_WEBHOOK_URL
+
+### Tester Access
+- Manage Open Testing opt-in URL and tester visibility in Google Play Console.
+- Ensure device coverage policy includes phones, tablets, ChromeOS, and Android XR-capable testers.
+
 ## Next Integration Steps
 1. Replace mock services with real Perfex CRM REST endpoints.
 2. Add secure token/session handling.

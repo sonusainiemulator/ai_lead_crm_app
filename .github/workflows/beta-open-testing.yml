@@ -1,0 +1,259 @@
+name: Beta Open Testing Pipeline
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - develop
+      - beta
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "Custom beta release notes"
+        required: false
+        type: string
+
+concurrency:
+  group: beta-open-testing-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_NAME: ai_lead_crm_app
+  PACKAGE_NAME: ${{ secrets.PLAY_PACKAGE_NAME }}
+  PLAY_TRACK: beta
+
+jobs:
+  unit-and-static-tests:
+    name: Unit and Static Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Create Flutter scaffold
+        run: flutter create --platforms=android --project-name $APP_NAME .
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test
+
+  integration-tests-matrix:
+    name: Integration Tests (${{ matrix.target.name }})
+    needs: unit-and-static-tests
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.target.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: Phone
+            api-level: 34
+            profile: pixel_7
+            experimental: false
+          - name: Tablet
+            api-level: 34
+            profile: pixel_tablet
+            experimental: false
+          - name: ChromeOS
+            api-level: 34
+            profile: pixel_c
+            experimental: true
+          - name: AndroidXR
+            api-level: 35
+            profile: pixel_8_pro
+            experimental: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Create Flutter scaffold
+        run: flutter create --platforms=android --project-name $APP_NAME .
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Integration tests on emulator (${{ matrix.target.name }})
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.target.api-level }}
+          profile: ${{ matrix.target.profile }}
+          script: |
+            if [ -d integration_test ]; then
+              flutter test integration_test
+            else
+              echo "No integration_test directory found. Running smoke unit test suite."
+              flutter test
+            fi
+
+  build-and-deploy-open-testing:
+    name: Build and Deploy to Play Open Testing
+    needs: integration-tests-matrix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Create Flutter scaffold
+        run: flutter create --platforms=android --project-name $APP_NAME .
+
+      - name: Validate required secrets
+        env:
+          PLAY_PACKAGE_NAME: ${{ secrets.PLAY_PACKAGE_NAME }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          [ -n "$PLAY_PACKAGE_NAME" ] || { echo "Missing required secret: PLAY_PACKAGE_NAME"; exit 1; }
+          [ -n "$PLAY_SERVICE_ACCOUNT_JSON" ] || { echo "Missing required secret: PLAY_SERVICE_ACCOUNT_JSON"; exit 1; }
+          [ -n "$ANDROID_KEYSTORE_BASE64" ] || { echo "Missing required secret: ANDROID_KEYSTORE_BASE64"; exit 1; }
+          [ -n "$ANDROID_KEYSTORE_PASSWORD" ] || { echo "Missing required secret: ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+          [ -n "$ANDROID_KEY_ALIAS" ] || { echo "Missing required secret: ANDROID_KEY_ALIAS"; exit 1; }
+          [ -n "$ANDROID_KEY_PASSWORD" ] || { echo "Missing required secret: ANDROID_KEY_PASSWORD"; exit 1; }
+
+      - name: Generate beta version
+        id: versioning
+        run: |
+          VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))
+          VERSION_NAME="1.0.0-beta.${GITHUB_RUN_NUMBER}"
+          sed -i "s/^version: .*/version: ${VERSION_NAME}+${VERSION_CODE}/" pubspec.yaml
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Using version ${VERSION_NAME}+${VERSION_CODE}"
+
+      - name: Prepare signing files
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/upload-keystore.jks
+          cat <<EOF > android/key.properties
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build signed AAB
+        run: flutter build appbundle --release
+
+      - name: Build signed APK (optional tester direct install)
+        run: flutter build apk --release
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          mkdir -p distribution/whatsnew/en-US
+          NOTES_FILE="distribution/whatsnew/en-US/default.txt"
+          if [ -n "${{ github.event.inputs.release_notes }}" ]; then
+            echo "${{ github.event.inputs.release_notes }}" > "$NOTES_FILE"
+          else
+            {
+              echo "Beta build: ${{ steps.versioning.outputs.version_name }}"
+              echo "Commit: ${{ github.sha }}"
+              echo "Branch: ${{ github.ref_name }}"
+              echo ""
+              echo "Highlights:"
+              git log -1 --pretty=format:"- %s"
+            } > "$NOTES_FILE"
+          fi
+
+      - name: Upload AAB to Google Play Open Testing
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ secrets.PLAY_PACKAGE_NAME }}
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          track: ${{ env.PLAY_TRACK }}
+          status: completed
+          changesNotSentForReview: true
+          whatsNewDirectory: distribution/whatsnew
+
+      - name: Publish release APK to GitHub Releases
+        uses: ncipollo/release-action@v1
+        with:
+          tag: beta-v${{ steps.versioning.outputs.version_code }}
+          name: Beta v${{ steps.versioning.outputs.version_name }}
+          body: |
+            Beta build uploaded to Google Play open testing track.
+            Version: ${{ steps.versioning.outputs.version_name }}+${{ steps.versioning.outputs.version_code }}
+            Branch: ${{ github.ref_name }}
+          prerelease: true
+          artifacts: build/app/outputs/flutter-apk/app-release.apk
+          artifactErrorsFailBuild: true
+
+      - name: Upload AAB/APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-build-${{ steps.versioning.outputs.version_code }}
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Tester access checklist
+        run: |
+          echo "Open testing is available via Play Store opt-in URL from Play Console." >> "$GITHUB_STEP_SUMMARY"
+          echo "Ensure tester groups/devices include Phones, Tablets, ChromeOS, Android XR." >> "$GITHUB_STEP_SUMMARY"
+          echo "If using managed testers, update Play Console tester list before promotion." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Beta Deployment Status"
+            echo "- Workflow: ${{ github.workflow }}"
+            echo "- Branch: ${{ github.ref_name }}"
+            echo "- Version: ${{ steps.versioning.outputs.version_name }}+${{ steps.versioning.outputs.version_code }}"
+            echo "- Play Track: ${{ env.PLAY_TRACK }}"
+            echo "- Run URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify Slack (optional)
+        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        run: |
+          STATUS="${{ job.status }}"
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Beta deployment ${STATUS} for ${{ github.repository }} on ${{ github.ref_name }}. Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" "${{ secrets.SLACK_WEBHOOK_URL }}"
